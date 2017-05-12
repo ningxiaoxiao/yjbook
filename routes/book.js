@@ -17,99 +17,120 @@ var book = sequelize.define('book', {
     isbn: Sequelize.STRING,
     state: Sequelize.INTEGER,
     count: Sequelize.INTEGER,
-    onweropenid: Sequelize.STRING,
-    onwername: Sequelize.STRING,
-    onwerimage: Sequelize.STRING,
+    openid: Sequelize.STRING,
 }, {
     freezeTableName: true,
-    timestamps: false
 });
+
+var user = sequelize.define('user', {
+    id: {
+        type: Sequelize.INTEGER,
+        primaryKey: true,
+        autoIncrement: true,
+    },
+    openid: Sequelize.STRING,
+    name: Sequelize.STRING,
+    image: Sequelize.STRING,
+}, {
+    freezeTableName: true,
+});
+
 
 var log = sequelize.define('log', {
     id: {
         type: Sequelize.INTEGER,
         primaryKey: true,
+        autoIncrement: true,
     },
-    isbn: Sequelize.STRING,
+    isbn: Sequelize.STRING, //被操作的书
     state: Sequelize.INTEGER, //0 借 1还 2增加 3删除 4禁用
-    onweropenid: Sequelize.STRING,
-    name: Sequelize.STRING,
-    timestamp: Sequelize.STRING,
+    openid: Sequelize.STRING, //操作人
 }, {
     freezeTableName: true,
-    timestamps: false
 });
+
+book.sync();
+log.sync();
+user.sync();
 
 var appid = 'wx3e02c0bcf121e5d7';
 var secret = 'eacac692e98d7972e2ad707c80e016c1';
 var admins = 'oP_H80KgKZPe1LOpv_LVzq7gAhkU';
 
-var addBook = function(isbn, openid, callback) {
+function dblog(isbn, state, openid) {
+    log.create({
+        state: state,
+        isbn: isbn,
+        openid: openid,
+    });
+}
+
+function addBook(isbn, openid, callback) {
     book.create({
         state: 0,
         isbn: isbn,
         count: 0,
     }).then(function(r) {
-        callback(r !== null)
+        callback(r !== null);
+        dblog(isbn, 2, openid)
     });
-};
 
-var delBook = function(isbn, openid, callback) {
+}
+
+function delBook(isbn, openid, callback) {
     book.destroy({
         where: {
             isbn: isbn
         }
     }).then(function(r) {
-        callback(r == 1)
+        callback(r == 1);
+        dblog(isbn, 3, openid)
     });
-};
 
-var borrowBook = function(isbn, ui) {
+}
 
+function borrowBook(isbn, ui, callback) {
     book.update({
-        onweropenid: ui.openid,
-        onwername: ui.nickName,
-        onwerimage: ui.avatarUrl,
+        openid: ui.openid,
         state: 1,
     }, {
         where: {
             isbn: isbn
         }
     }).then(function(dbp) {
-        if (dbp[0] == 1) {
-            return true;
-        }
-        return false;
+        callback(dbp[0] == 1);
+        dblog(isbn, 0, ui.openid)
 
     });
-};
+}
 
-var returnBook = function(isbn, openid) {
+function returnBook(isbn, openid, callback) {
     book.update({
-        onweropenid: null,
-        onwername: null,
-        onwerimage: null,
+        openid: null,
+        count: sequelize.literal('`count` +1'),
         state: 0,
     }, {
         where: {
             isbn: isbn
         }
     }).then(function(dbp) {
-        if (dbp[0] == 1) {
-            return true;
-        }
-        return true;
-
+        callback(dbp[0] == 1);
+        dblog(isbn, 1, openid)
     });
-};
-
-
+}
 
 /* GET users listing. */
 router.get('/getinfo', function(req, res, next) {
     //arg  isbn openid
 
-    var info;
+    //默认数据
+    var info = {
+        onwerimage: null,
+        onwername: null,
+        onweropenid: null,
+        state: 3,
+        count: 0
+    };
     book.findOne({
         where: {
             isbn: req.query.isbn
@@ -117,31 +138,39 @@ router.get('/getinfo', function(req, res, next) {
     }).then(function(b) {
         //数据库
         //state 0 可用 1 被借了 2 禁用掉了 3 没有这本书
-        console.log(b);
-
+        //console.log(b);
         if (b) {
             //从数据库中读出
-            info = {
-                onweropenid: b.get('onweropenid'),
-                state: b.get('state'),
-                count: b.get('count'),
-                onwerimage: b.get('onwerimage'),
-                onwername: b.get('onwername'),
-            };
+            //读用户
 
+            user.findOne({
+                where: {
+                    openid: b.get('openid'),
+                }
+            }).then(function(userb) {
+                if (userb) {
+                    info = {
+                        onweropenid: b.get('openid'),
+                        state: b.get('state'),
+                        count: b.get('count'),
+                        onwerimage: userb.get('image'),
+                        onwername: userb.get('name'),
+                    };
+                } else {
+                    info = {
+                        onweropenid: b.get('openid'),
+                        state: b.get('state'),
+                        count: b.get('count'),
+                        onwerimage: null,
+                        onwername: null,
+                    };
+                }
+                res.send(JSON.stringify(info));
+            });
         } else {
-            info = {
-                onwerimage: '',
-                onwername: '',
-                onweropenid: '',
-                state: 3,
-                count: 0
-            };
-
+            res.send(JSON.stringify(info));
         }
-        console.log(info);
-        console.log('end');
-        res.send(JSON.stringify(info));
+
     });
 });
 router.get('/getopenid', function(req, res, next) {
@@ -159,42 +188,38 @@ router.get('/getopenid', function(req, res, next) {
 router.post('/borrowbook', function(req, res, next) {
     //更新书的状态
     // arg  isbn userinfo
-    var info;
-    if (borrowBook(req.body.isbn, req.body.userInfo)) {
-        info = {
-            "err": 0,
-            "msg": "成功",
-            "isbn": req.body.isbn
-        };
-    } else {
-        info = {
-            "err": 1,
-            "msg": "失败",
-            "isbn": req.body.isbn
 
+    borrowBook(req.body.isbn, req.body.userInfo, function(r) {
+        var info = {
+            "err": r ? 0 : 1,
+            "isbn": req.query.isbn,
         };
-    }
-    res.send(JSON.stringify(info));
+        res.send(JSON.stringify(info));
+    });
+    //更新用户信息
+    user.findOrCreate({
+        where: {
+            openid: req.body.userInfo.openid,
+        },
+        defaults: {
+            openid: req.body.userInfo.openid,
+            name: req.body.userInfo.nickName,
+            image: req.body.userInfo.avatarUrl
+        }
+    });
+
 });
 router.post('/returnbook', function(req, res, next) {
     //更新书的状态
     // arg  isbn openid
-    var info;
-    if (returnBook(req.body.isbn, req.body.openid)) {
-        info = {
-            "err": 0,
-            "msg": "成功",
-            "isbn": req.body.isbn,
-        };
-    } else {
-        info = {
-            "err": 1,
-            "msg": "失败",
-            "isbn": req.body.isbn,
-        };
-    }
 
-    res.send(JSON.stringify(info));
+    returnBook(req.body.isbn, req.body.openid, function(r) {
+        var info = {
+            "err": r ? 0 : 1,
+            "isbn": req.query.isbn,
+        };
+        res.send(JSON.stringify(info));
+    });
 });
 
 router.get('/addbook', function(req, res, next) {
@@ -204,9 +229,9 @@ router.get('/addbook', function(req, res, next) {
         var info = {
             "err": r ? 0 : 1,
             "isbn": req.query.isbn,
-        }
+        };
         res.send(JSON.stringify(info));
-    })
+    });
 });
 
 router.get('/delbook', function(req, res, next) {
@@ -216,10 +241,10 @@ router.get('/delbook', function(req, res, next) {
         var info = {
             "err": r ? 0 : 1,
             "isbn": req.query.isbn,
-        }
+        };
 
         res.send(JSON.stringify(info));
-    })
+    });
 });
 
 

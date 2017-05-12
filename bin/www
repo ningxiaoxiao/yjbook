@@ -10,9 +10,12 @@ var fs = require('fs');
 var http = require('http');
 var https = require('https');
 
-var privateKey = fs.readFileSync('./214094504690378.key', 'utf8');
-var certificate = fs.readFileSync('./public.pem', 'utf8');
-var credentials = { key: privateKey, cert: certificate };
+
+var credentials = {
+    key: fs.readFileSync('./214094504690378.key', 'utf8'),
+    cert: fs.readFileSync('./214094504690378.pem', 'utf8'),
+    // ca: fs.readFileSync('./214094504690378.pem', 'utf8')
+};
 
 
 /**

@@ -8,169 +8,165 @@ var sequelize = new Sequelize('yjbook', 'root', '123456', {
     dialect: 'mysql'
 });
 
-var book = sequelize.define('book', {
-    id: {
-        type: Sequelize.INTEGER,
-        primaryKey: true,
-        autoIncrement: true,
-    },
-    isbn: Sequelize.STRING,
-    state: Sequelize.INTEGER,
-    count: Sequelize.INTEGER,
-    openid: Sequelize.STRING,
-}, {
-    freezeTableName: true,
-});
+var mongoose = require('mongoose');
+var Schema = mongoose.Schema;
+mongoose.Promise = global.Promise;
+var db = mongoose.createConnection('mongodb://localhost/yjbook');
 
-var user = sequelize.define('user', {
-    id: {
-        type: Sequelize.INTEGER,
-        primaryKey: true,
-        autoIncrement: true,
-    },
-    openid: Sequelize.STRING,
-    name: Sequelize.STRING,
-    image: Sequelize.STRING,
-}, {
-    freezeTableName: true,
+db.on('error', function(err) {
+    console.log(err);
 });
 
 
-var log = sequelize.define('log', {
-    id: {
-        type: Sequelize.INTEGER,
-        primaryKey: true,
-        autoIncrement: true,
-    },
-    isbn: Sequelize.STRING, //被操作的书
-    state: Sequelize.INTEGER, //0 借 1还 2增加 3删除 4禁用
-    openid: Sequelize.STRING, //操作人
-}, {
-    freezeTableName: true,
+var bookSchema = new mongoose.Schema({
+    isbn: { type: String },
+    state: { type: Number },
+    count: { type: Number },
+    openid: { type: String },
 });
 
-book.sync();
-log.sync();
-user.sync();
+var bookModel = db.model('book', bookSchema);
+
+var userSchema = new mongoose.Schema({
+    openid: { type: String },
+    name: { type: String },
+    image: { type: String },
+});
+
+
+userSchema.statics.findAndModify = function(query, sort, doc, options, callback) {
+    return this.collection.findAndModify(query, sort, doc, options, callback);
+};
+
+var userModel = db.model('user', userSchema);
+
+var logSchema = new mongoose.Schema({
+    isbn: { type: String },
+    state: { type: Number },
+    openid: { type: String },
+});
+
+
+
+var logModel = db.model('log', logSchema);
+
 
 var appid = 'wx3e02c0bcf121e5d7';
 var secret = 'eacac692e98d7972e2ad707c80e016c1';
 var admins = 'oP_H80KgKZPe1LOpv_LVzq7gAhkU';
 
 function dblog(isbn, state, openid) {
-    log.create({
+
+    bookModel.create({
         state: state,
         isbn: isbn,
         openid: openid,
+    }, function(err, log) {
+        //console.log(log);
+        if (err) {
+            console.log('log err');
+        }
     });
+
 }
 
 function addBook(isbn, openid, callback) {
-    book.create({
-        state: 0,
-        isbn: isbn,
-        count: 0,
-    }).then(function(r) {
-        callback(r !== null);
-        dblog(isbn, 2, openid)
-    });
 
+    var b = new bookModel({ state: 0, isbn: isbn, openid: null, count: 0 });
+    b.save(function(err, b) {
+        dblog(isbn, 2, openid);
+        callback(err === null);
+    });
 }
 
 function delBook(isbn, openid, callback) {
-    book.destroy({
-        where: {
-            isbn: isbn
+
+    bookModel.remove({ isbn: isbn }, function(err) {
+
+        if (err) {
+            console.log(err);
         }
-    }).then(function(r) {
-        callback(r == 1);
-        dblog(isbn, 3, openid)
+
+        callback(err === null);
+
+
     });
+
 
 }
 
 function borrowBook(isbn, ui, callback) {
-    book.update({
-        openid: ui.openid,
-        state: 1,
-    }, {
-        where: {
-            isbn: isbn
+    console.log(1);
+    addUser(ui.openid, ui.nickName, ui.avatarUrl);
+    console.log(2);
+    bookModel.update({ isbn: isbn }, { openid: ui.openid, state: 1 }, function(err, count, res) {
+        if (err) {
+            console.log('borrow err=' + err);
         }
-    }).then(function(dbp) {
-        callback(dbp[0] == 1);
-        dblog(isbn, 0, ui.openid)
-
+        dblog(isbn, 0, ui.openid);
+        console.log('borrow count=' + count)
+        console.log(3);
+        callback(count.ok == 1);
     });
 }
 
-function returnBook(isbn, openid, callback) {
-    book.update({
-        openid: null,
-        count: sequelize.literal('`count` +1'),
-        state: 0,
-    }, {
-        where: {
-            isbn: isbn
+function addUser(openid, name, image) {
+
+
+    userModel.findOne({ openid: openid }, function(err, user) {
+        if (user) {
+            console.log('haved user');
+        } else {
+            userModel.create({ name: name, image: image, openid: openid }, function(err, newuser) {
+
+                if (newuser) {
+                    console.log('add user ok');
+                } else {
+                    console.log('add user err');
+                }
+            });
         }
-    }).then(function(dbp) {
-        callback(dbp[0] == 1);
-        dblog(isbn, 1, openid)
+    })
+}
+
+function returnBook(isbn, openid, callback) {
+
+    bookModel.update({ isbn: isbn }, { openid: null, state: 0, $inc: { count: 1 } }, function(err, count, res) {
+        if (err) {
+            console.log(err);
+        }
+        dblog(isbn, 1, openid);
+        callback(count.ok == 1);
     });
 }
 
 /* GET users listing. */
 router.get('/getinfo', function(req, res, next) {
     //arg  isbn openid
+    bookModel.findOne({ isbn: req.query.isbn }, function(err, bookob) {
+        // console.log(bookob);
 
-    //默认数据
-    var info = {
-        onwerimage: null,
-        onwername: null,
-        onweropenid: null,
-        state: 3,
-        count: 0
-    };
-    book.findOne({
-        where: {
-            isbn: req.query.isbn
-        }
-    }).then(function(b) {
-        //数据库
-        //state 0 可用 1 被借了 2 禁用掉了 3 没有这本书
-        //console.log(b);
-        if (b) {
-            //从数据库中读出
-            //读用户
+        if (bookob) {
 
-            user.findOne({
-                where: {
-                    openid: b.get('openid'),
-                }
-            }).then(function(userb) {
-                if (userb) {
-                    info = {
-                        onweropenid: b.get('openid'),
-                        state: b.get('state'),
-                        count: b.get('count'),
-                        onwerimage: userb.get('image'),
-                        onwername: userb.get('name'),
-                    };
-                } else {
-                    info = {
-                        onweropenid: b.get('openid'),
-                        state: b.get('state'),
-                        count: b.get('count'),
-                        onwerimage: null,
-                        onwername: null,
-                    };
-                }
-                res.send(JSON.stringify(info));
-            });
+            if (bookob.openid) {
+
+                userModel.findOne({ openid: bookob.openid }, function(err, user) {
+
+                    if (user) {
+
+                        bookob._doc['name'] = user.name;
+                        bookob._doc['image'] = user.image;
+                    }
+                    console.log(4);
+                    res.send(JSON.stringify(bookob));
+                });
+            } else {
+
+                res.send(JSON.stringify(bookob));
+            }
         } else {
-            res.send(JSON.stringify(info));
+            res.send(JSON.stringify({ state: 3 }));
         }
-
     });
 });
 router.get('/getopenid', function(req, res, next) {
@@ -189,6 +185,7 @@ router.post('/borrowbook', function(req, res, next) {
     //更新书的状态
     // arg  isbn userinfo
 
+
     borrowBook(req.body.isbn, req.body.userInfo, function(r) {
         var info = {
             "err": r ? 0 : 1,
@@ -196,18 +193,6 @@ router.post('/borrowbook', function(req, res, next) {
         };
         res.send(JSON.stringify(info));
     });
-    //更新用户信息
-    user.findOrCreate({
-        where: {
-            openid: req.body.userInfo.openid,
-        },
-        defaults: {
-            openid: req.body.userInfo.openid,
-            name: req.body.userInfo.nickName,
-            image: req.body.userInfo.avatarUrl
-        }
-    });
-
 });
 router.post('/returnbook', function(req, res, next) {
     //更新书的状态
@@ -225,6 +210,9 @@ router.post('/returnbook', function(req, res, next) {
 router.get('/addbook', function(req, res, next) {
     //更新书的状态
     // arg  isbn openid
+    //  console.log(req.query);
+
+
     addBook(req.query.isbn, req.query.openid, function(r) {
         var info = {
             "err": r ? 0 : 1,

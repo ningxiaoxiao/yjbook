@@ -9,7 +9,7 @@ var Schema = mongoose.Schema;
 mongoose.Promise = global.Promise;
 
 
-var mongoUrl = process.env.OPENSHIFT_MONGODB_DB_URL || process.env.MONGO_URL,
+var mongoURL = process.env.OPENSHIFT_MONGODB_DB_URL || process.env.MONGO_URL,
     mongoURLLabel = "";
 
 if (mongoURL === null && process.env.DATABASE_SERVICE_NAME) {
@@ -33,7 +33,7 @@ if (mongoURL === null && process.env.DATABASE_SERVICE_NAME) {
 
 }
 
-var db = mongoose.createConnection(mongoUrl);
+var db = mongoose.createConnection(mongoURL);
 
 db.on('error', function(err) {
     console.log(err);
